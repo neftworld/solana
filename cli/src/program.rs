@@ -5,6 +5,7 @@ use {
             log_instruction_custom_error, CliCommand, CliCommandInfo, CliConfig, CliError,
             ProcessResult,
         },
+        compute_unit_price::WithComputeUnitPrice,
     },
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -67,6 +68,8 @@ pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! \
 Closed programs cannot be recreated at the same program id. \
 Once a program is closed, it can never be invoked again. \
 To proceed with closing, rerun the `close` command with the `--bypass-warning` flag";
+
+pub const COMPUTE_UNIT_PRICE: Option<&u64> = Some(&350_000_u64);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramCliCommand {
@@ -1154,12 +1157,14 @@ fn process_set_authority(
         ))
     } else if let Some(pubkey) = buffer_pubkey {
         if let Some(ref new_authority) = new_authority {
+            let buffer_auth_ix = vec![bpf_loader_upgradeable::set_buffer_authority(
+                &pubkey,
+                &authority_signer.pubkey(),
+                new_authority,
+            )]
+            .with_compute_unit_price(COMPUTE_UNIT_PRICE);
             Transaction::new_unsigned(Message::new(
-                &[bpf_loader_upgradeable::set_buffer_authority(
-                    &pubkey,
-                    &authority_signer.pubkey(),
-                    new_authority,
-                )],
+                &buffer_auth_ix,
                 Some(&config.signers[0].pubkey()),
             ))
         } else {
@@ -1792,9 +1797,10 @@ fn do_process_program_write_and_deploy(
             minimum_balance,
         )
     };
+    println!("Initial instructions len: {}", initial_instructions.len());
     let initial_message = if !initial_instructions.is_empty() {
         Some(Message::new_with_blockhash(
-            &initial_instructions,
+            &initial_instructions.with_compute_unit_price(COMPUTE_UNIT_PRICE),
             Some(&config.signers[0].pubkey()),
             &blockhash,
         ))
@@ -1815,7 +1821,8 @@ fn do_process_program_write_and_deploy(
         } else {
             loader_instruction::write(buffer_pubkey, loader_id, offset, bytes)
         };
-        Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
+        let ix_vec = vec![instruction].with_compute_unit_price(COMPUTE_UNIT_PRICE);
+        Message::new_with_blockhash(&ix_vec, Some(&payer_pubkey), &blockhash)
     };
 
     let mut write_messages = vec![];
@@ -1825,6 +1832,8 @@ fn do_process_program_write_and_deploy(
     }
 
     // Create and add final message
+    let finalize_instructions = vec![loader_instruction::finalize(buffer_pubkey, loader_id)]
+        .with_compute_unit_price(COMPUTE_UNIT_PRICE);
     let final_message = if let Some(program_signers) = program_signers {
         let message = if loader_id == &bpf_loader_upgradeable::id() {
             Message::new_with_blockhash(
@@ -1837,13 +1846,14 @@ fn do_process_program_write_and_deploy(
                         UpgradeableLoaderState::size_of_program(),
                     )?,
                     programdata_len,
-                )?,
+                )?
+                .with_compute_unit_price(COMPUTE_UNIT_PRICE),
                 Some(&config.signers[0].pubkey()),
                 &blockhash,
             )
         } else {
             Message::new_with_blockhash(
-                &[loader_instruction::finalize(buffer_pubkey, loader_id)],
+                &finalize_instructions,
                 Some(&config.signers[0].pubkey()),
                 &blockhash,
             )
@@ -1938,7 +1948,7 @@ fn do_process_program_upgrade(
 
             let initial_message = if !initial_instructions.is_empty() {
                 Some(Message::new_with_blockhash(
-                    &initial_instructions,
+                    &initial_instructions.with_compute_unit_price(COMPUTE_UNIT_PRICE),
                     Some(&config.signers[0].pubkey()),
                     &blockhash,
                 ))
@@ -1950,13 +1960,14 @@ fn do_process_program_upgrade(
             let upgrade_authority_pubkey = upgrade_authority.pubkey();
             let payer_pubkey = config.signers[0].pubkey();
             let create_msg = |offset: u32, bytes: Vec<u8>| {
-                let instruction = bpf_loader_upgradeable::write(
+                let instructions = vec![bpf_loader_upgradeable::write(
                     &buffer_signer_pubkey,
                     &upgrade_authority_pubkey,
                     offset,
                     bytes,
-                );
-                Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
+                )]
+                .with_compute_unit_price(COMPUTE_UNIT_PRICE);
+                Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
             };
 
             // Create and add write messages
@@ -1973,12 +1984,13 @@ fn do_process_program_upgrade(
 
     // Create and add final message
     let final_message = Message::new_with_blockhash(
-        &[bpf_loader_upgradeable::upgrade(
+        &vec![bpf_loader_upgradeable::upgrade(
             program_id,
             buffer_pubkey,
             &upgrade_authority.pubkey(),
             &config.signers[0].pubkey(),
-        )],
+        )]
+        .with_compute_unit_price(COMPUTE_UNIT_PRICE),
         Some(&config.signers[0].pubkey()),
         &blockhash,
     );
@@ -1995,6 +2007,7 @@ fn do_process_program_upgrade(
         )?;
     }
 
+    println!("Sending deploy txs");
     send_deploy_messages(
         rpc_client,
         config,
@@ -2087,7 +2100,10 @@ fn complete_partial_program_init(
             .into());
         }
     }
-    Ok((instructions, balance_needed))
+    Ok((
+        instructions.with_compute_unit_price(COMPUTE_UNIT_PRICE),
+        balance_needed,
+    ))
 }
 
 fn check_payer(
@@ -2157,14 +2173,16 @@ fn send_deploy_messages(
     }
 
     if !write_messages.is_empty() {
-        if let Some(write_signer) = write_signer {
-            trace!("Writing program data");
-            let connection_cache = if config.use_quic {
-                ConnectionCache::new_quic("connection_cache_cli_program_quic", 1)
-            } else {
-                ConnectionCache::with_udp("connection_cache_cli_program_udp", 1)
-            };
-            let transaction_errors = match connection_cache {
+        let chunks: Vec<&[Message]> = write_messages.chunks(10).collect();
+        for chunk in chunks {
+            if let Some(write_signer) = write_signer {
+                trace!("Writing program data");
+                let connection_cache = if config.use_quic {
+                    ConnectionCache::new_quic("connection_cache_cli_program_quic", 5)
+                } else {
+                    ConnectionCache::with_udp("connection_cache_cli_program_udp", 5)
+                };
+                let transaction_errors = match connection_cache {
                 ConnectionCache::Udp(cache) => TpuClient::new_with_connection_cache(
                     rpc_client.clone(),
                     &config.websocket_url,
@@ -2172,7 +2190,7 @@ fn send_deploy_messages(
                     cache,
                 )?
                 .send_and_confirm_messages_with_spinner(
-                    write_messages,
+                    chunk,
                     &[payer_signer, write_signer],
                 ),
                 ConnectionCache::Quic(cache) => {
@@ -2190,10 +2208,10 @@ fn send_deploy_messages(
                     send_and_confirm_transactions_in_parallel_blocking(
                         rpc_client.clone(),
                         Some(tpu_client),
-                        write_messages,
+                        chunk,
                         &[payer_signer, write_signer],
                         SendAndConfirmConfig {
-                            resign_txs_count: Some(5),
+                            resign_txs_count: Some(50),
                             with_spinner: true,
                         },
                     )
@@ -2204,13 +2222,14 @@ fn send_deploy_messages(
             .flatten()
             .collect::<Vec<_>>();
 
-            if !transaction_errors.is_empty() {
-                for transaction_error in &transaction_errors {
-                    error!("{:?}", transaction_error);
+                if !transaction_errors.is_empty() {
+                    for transaction_error in &transaction_errors {
+                        error!("{:?}", transaction_error);
+                    }
+                    return Err(
+                        format!("{} write transactions failed", transaction_errors.len()).into(),
+                    );
                 }
-                return Err(
-                    format!("{} write transactions failed", transaction_errors.len()).into(),
-                );
             }
         }
     }
