@@ -2273,7 +2273,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "slab",
  "tokio",
  "tokio-util 0.7.1",
@@ -2629,9 +2629,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.0.2"
+version = "2.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8adf3ddd720272c6ea8bf59463c04e0f93d0bbf7c5439b691bca2987e0270897"
+checksum = "168fb715dda47215e360912c096649d23d58bf392ac62f73919e831745e40f26"
 dependencies = [
  "equivalent",
  "hashbrown 0.14.1",
@@ -4841,7 +4841,7 @@ version = "0.9.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a49e178e4452f45cb61d0cd8cebc1b0fafd3e41929e996cef79aa3aca91f574"
 dependencies = [
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "itoa",
  "ryu",
  "serde",
@@ -5631,7 +5631,7 @@ dependencies = [
  "dashmap 4.0.2",
  "futures 0.3.28",
  "futures-util",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "indicatif",
  "log",
  "quinn",
@@ -5712,7 +5712,7 @@ dependencies = [
  "bincode",
  "crossbeam-channel",
  "futures-util",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "indicatif",
  "log",
  "rand 0.8.5",
@@ -6054,7 +6054,7 @@ dependencies = [
  "clap 2.33.3",
  "crossbeam-channel",
  "flate2",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "itertools",
  "log",
  "lru",
@@ -7116,7 +7116,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "histogram",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "itertools",
  "libc",
  "log",
@@ -7207,7 +7207,7 @@ dependencies = [
  "console",
  "csv",
  "ctrlc",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "indicatif",
  "pickledb",
  "serde",
@@ -7236,7 +7236,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "futures-util",
- "indexmap 2.0.2",
+ "indexmap 2.2.6",
  "indicatif",
  "log",
  "rayon",
